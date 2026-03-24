@@ -1,0 +1,1 @@
+This folder is utilized to safe the outputs of the various scripts which will be utilized again in following scripts. 
