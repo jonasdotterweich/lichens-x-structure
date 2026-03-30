@@ -31,21 +31,12 @@ cfg <- get_project_config()
 
 PATH_LICHEN_RAW  <- cfg$data$lichen
 PATH_COORDS_RAW  <- cfg$data$coordinates
-PATH_OUT_CLEAN   <- here::here("data", "Sumava", "outputs", "lichen_clean.csv")
-PATH_OUT_REPORTS <- here::here("data", "Sumava", "outputs")
+PATH_OUT_CLEAN   <- here::here( "outputs",  "Sumava", "lichen_clean.csv")
+PATH_OUT_REPORTS <- here::here( "outputs", "Sumava", "reports")
 
-
-
-
-# Paths (relative to project root — edit only these two lines for a new study)
-PATH_LICHEN_RAW  <- "Lichens/Licen_data.xlsx"
-PATH_COORDS_RAW  <- "Lichens/Biodiversity_120 plot.xlsx"
-PATH_OUT_CLEAN   <- "studies/sumava_CZ/outputs/lichen_clean.csv"
-PATH_OUT_REPORTS <- "studies/sumava_CZ/outputs/"   # QC / diagnostic CSVs
 
 N_PLOTS <- 120   # Total survey plots in this study
 
-dir.create(PATH_OUT_REPORTS, recursive = TRUE, showWarnings = FALSE)
 
 
 # ==============================================================================
@@ -202,6 +193,8 @@ print(candidate_species)
 # ------------------------------------------------------------------------------
 # These functions support interactive exploration during prep.
 # They do NOT produce any outputs that feed the modeling pipeline.
+# They could be relevant however in a future case study or 
+# to run the exploratory checks in section 8 below.
 # ==============================================================================
 
 # --- 7a. Single-species viability report -------------------------------------
@@ -563,19 +556,33 @@ check_multiple_species_with_cooccurrence <- function(species_list,
   print_cooccurrence_report(cooccur)
   plot_cooccurrence(cooccur)
   
-  write_csv(cooccur$cooccur_counts,
-            file.path(PATH_OUT_REPORTS, "qc_cooccurrence_matrix.csv"))
+ write_csv(cooccur$cooccur_counts,
+          file.path(PATH_OUT_REPORTS, "qc_cooccurrence_matrix.csv"))
   cat("  \u2713 Saved: qc_cooccurrence_matrix.csv\n")
   
   list(species_summary = summary_tbl, cooccurrence = cooccur)
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ==============================================================================
 # 8. RUN EXPLORATORY CHECKS
 # ------------------------------------------------------------------------------
 # The OGF indicator list from Malíček et al. (2019) is defined here because it
-# is a literature reference specific to the Czech / Bohubin study context.
+# is a literature reference specific to the Czech / Sumava study context.
 # ==============================================================================
 
 ogf_indicators <- c(
