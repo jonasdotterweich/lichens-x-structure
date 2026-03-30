@@ -25,7 +25,17 @@ library(ggplot2)
 library(pheatmap)
 
 
-#individual working directory for loading the data
+# Pull paths from the central config (utils.R)
+source(here::here("utils.R"))
+cfg <- get_project_config()
+
+PATH_LICHEN_RAW  <- cfg$data$lichen
+PATH_COORDS_RAW  <- cfg$data$coordinates
+PATH_OUT_CLEAN   <- here::here("data", "Sumava", "outputs", "lichen_clean.csv")
+PATH_OUT_REPORTS <- here::here("data", "Sumava", "outputs")
+
+
+
 
 # Paths (relative to project root — edit only these two lines for a new study)
 PATH_LICHEN_RAW  <- "Lichens/Licen_data.xlsx"

@@ -49,18 +49,18 @@ get_project_config <- function() {
     # Paths are only used by the helper functions in 01_data_loading.R.
     # Your own prep scripts (01a, 01b) can ignore these.
     data = list(
-      id_col       = "project_id",               # plot identifier column name
+      id_col       = "plot_id",               # plot identifier column name
       n_plots      = 120L,                        # total number of surveyed plots
-      structural   = here::here("Lichens", "Structural_data.xlsx"),
-      lichen       = here::here("Lichens", "Licen_data.xlsx"),
-      coordinates  = here::here("Lichens", "Biodiversity_120 plot.xlsx")
+      structural   = here::here("data", "Sumava", "Structural_data.xlsx"),
+      lichen       = here::here("data","Sumava", "Lichen_data.xlsx"),
+      coordinates  = here::here("data","Sumava","Biodiversity_120 plot.xlsx")
     ),
     
     # ── OUTPUT DIRECTORIES ──────────────────────────────────────────────────
     output = list(
-      root     = here::here("Lichens", "model_outputs"),
-      standard = here::here("Lichens", "model_outputs", "standard"),
-      reduced  = here::here("Lichens", "model_outputs", "reduced")
+      root     = here::here("outputs","Sumava", "model_outputs"),
+      standard = here::here("outputs", "Sumava","model_outputs", "standard"),
+      reduced  = here::here("outputs", "Sumava", "model_outputs", "reduced")
     ),
     
     # ── MODELLING THRESHOLDS ────────────────────────────────────────────────
