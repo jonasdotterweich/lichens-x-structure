@@ -3,7 +3,7 @@
 # ==============================================================================
 # PURPOSE  : Load, translate, explore, group, and export lichen data for
 #            the Sumava NP case study.
-# OUTPUT   : outputs/Sumava_CZ/lichen_clean.csv
+# OUTPUT   : outputs/Sumava/lichen_clean.csv
 #              Canonical schema: plot_id | X | Y | <group>_presence (0/1 int)
 #                                              | <group>_richness (int)
 # AUTHOR   : Jonas Dotterweich
