@@ -1,84 +1,86 @@
 # =============================================================================
 # 07_model_fitting.R
-# Functions for fitting GLM and NB models
+# Functions for fitting Generalized Linear Mixed Models (GLMMs)
 # =============================================================================
-# Provides: fit_glm_model(), fit_nb_model(), run_pre_dharma_checks(),
-#           extract_model_summary()
+# Provides: fit_glmm_model(), run_pre_dharma_checks(), extract_model_summary()
+#
+# All models are fitted with glmmTMB, which handles both:
+#   - Binary (presence/absence)  → family = binomial(link = "logit")  [default]
+#   - Count (richness)           → family = glmmTMB::nbinom2
+#
+# Random effects are set in utils.R → glmm$random_effects.
+# See that section for syntax examples and what to change per dataset.
 # =============================================================================
 
 library(dplyr)
 library(tibble)
 library(glmmTMB)
 
-source(here::here("utils.R"))
+source(here::here("R", "utils.R"))
 
 
 # -----------------------------------------------------------------------------
 # PUBLIC FUNCTIONS
 # -----------------------------------------------------------------------------
 
-#' Fit a binomial GLM (logit link) for presence/absence response
+#' Fit a GLMM (Generalized Linear Mixed Model) using glmmTMB
 #'
-#' @param data A data frame or tibble containing all response and predictor
-#'   columns (first argument – pipe-friendly).
-#' @param response Character. Name of the binary (0/1) response column.
-#' @param predictors Character vector of predictor column names.
-#' @param family A `family` object. Default `binomial(link = "logit")`.
-#' @return A fitted `glm` object with an additional attribute `model_name` set
-#'   to `response`.
-#' @examples
-#' m_parmelia <- fit_glm_model(modeling_data,
-#'                             response   = "parmelia_agg_presence",
-#'                             predictors = predictors_scaled)
-fit_glm_model <- function(data,
-                          response,
-                          predictors,
-                          family = stats::binomial(link = "logit")) {
-  stopifnot(is.data.frame(data), is.character(response),
-            is.character(predictors), length(predictors) > 0)
-  
-  if (!response %in% colnames(data)) {
-    stop("Response column '", response, "' not found in data.")
-  }
-  missing_preds <- setdiff(predictors, colnames(data))
-  if (length(missing_preds) > 0) {
-    stop("Predictor column(s) not found: ", paste(missing_preds, collapse = ", "))
-  }
-  
-  formula_str <- paste(response, "~", paste(predictors, collapse = " + "))
-  model_formula <- stats::as.formula(formula_str)
-  
-  model <- stats::glm(model_formula, data = data, family = family)
-  attr(model, "model_name") <- response
-  
-  lichen_message("Fitted binomial GLM: ", response,
-                 " (AIC = ", round(stats::AIC(model), 1), ")")
-  model
-}
-
-
-#' Fit a negative-binomial GLM for count response (calicioids richness)
+#' The single model-fitting function for this framework.  Uses
+#' \code{glmmTMB::glmmTMB()} for all response types:
+#' \itemize{
+#'   \item Binary (presence/absence): \code{family = binomial(link = "logit")} (default)
+#'   \item Count (richness): \code{family = glmmTMB::nbinom2}
+#' }
 #'
-#' Uses `glmmTMB::glmmTMB()` with `family = nbinom2` (NB2 parameterisation).
+#' Random effects account for non-independence among plots that are grouped
+#' by region, survey cluster, observer, etc.  Set the default grouping in
+#' \code{utils.R → glmm$random_effects} (see that file for syntax examples).
 #'
 #' @param data A data frame or tibble (pipe-friendly).
-#' @param response Character. Name of the count response column.
-#'   Default `"calicioids_richness"`.
-#' @param predictors Character vector of predictor column names.
-#' @return A fitted `glmmTMB` object with attribute `model_name` set to
-#'   `response`.
+#' @param response Character. Name of the response column.
+#' @param predictors Character vector of fixed-effect predictor column names.
+#' @param random_effects Character vector of random effect terms in
+#'   \code{lme4}/\code{glmmTMB} formula syntax.
+#'   Examples:
+#'   \code{c("(1|region)")} – random intercept per region;
+#'   \code{c("(1|region)", "(1|observer)")} – two crossed random intercepts;
+#'   \code{c("(dbh_max|region)")} – random slope + intercept.
+#'   Default: \code{get_project_config()$glmm$random_effects}.
+#' @param family A family object.  Default \code{binomial(link = "logit")}.
+#'   Use \code{glmmTMB::nbinom2} for count responses.
+#' @return A fitted \code{glmmTMB} object with attribute \code{model_name}.
 #' @examples
-#' m_calicioids <- fit_nb_model(modeling_data,
-#'                              response   = "calicioids_richness",
-#'                              predictors = predictors_scaled)
-fit_nb_model <- function(data,
-                         response   = "calicioids_richness",
-                         predictors) {
+#' # Binary response (presence/absence)
+#' m_parmelia <- fit_glmm_model(
+#'   modeling_data,
+#'   response       = "parmelia_agg_presence",
+#'   predictors     = predictors_scaled,
+#'   random_effects = c("(1|region)")
+#' )
+#'
+#' # Count response (species richness)
+#' m_calicioids <- fit_glmm_model(
+#'   modeling_data,
+#'   response       = "calicioids_richness",
+#'   predictors     = predictors_scaled,
+#'   random_effects = c("(1|region)"),
+#'   family         = glmmTMB::nbinom2
+#' )
+fit_glmm_model <- function(data,
+                           response,
+                           predictors,
+                           random_effects = get_project_config()$glmm$random_effects,
+                           family         = stats::binomial(link = "logit")) {
   if (!requireNamespace("glmmTMB", quietly = TRUE)) {
-    stop("Package 'glmmTMB' is required. Install from CRAN with: install.packages(\"glmmTMB\")")
+    stop("Package 'glmmTMB' is required. Install from CRAN: install.packages(\"glmmTMB\")")
   }
   stopifnot(is.data.frame(data), is.character(response),
             is.character(predictors), length(predictors) > 0)
+  
+  if (length(random_effects) == 0) {
+    stop("fit_glmm_model() requires at least one random effect.\n",
+         "Set glmm$random_effects in utils.R or pass random_effects directly.")
+  }
   
   if (!response %in% colnames(data)) {
     stop("Response column '", response, "' not found in data.")
@@ -88,33 +90,38 @@ fit_nb_model <- function(data,
     stop("Predictor column(s) not found: ", paste(missing_preds, collapse = ", "))
   }
   
-  formula_str   <- paste(response, "~", paste(predictors, collapse = " + "))
+  fixed_part    <- paste(predictors, collapse = " + ")
+  re_part       <- paste(random_effects, collapse = " + ")
+  formula_str   <- paste0(response, " ~ ", fixed_part, " + ", re_part)
   model_formula <- stats::as.formula(formula_str)
   
-  model <- glmmTMB::glmmTMB(model_formula, data = data,
-                            family = glmmTMB::nbinom2)
+  model <- glmmTMB::glmmTMB(model_formula, data = data, family = family)
   attr(model, "model_name") <- response
   
-  lichen_message("Fitted negative-binomial GLM: ", response,
+  lichen_message("Fitted GLMM: ", response,
                  " (AIC = ", round(stats::AIC(model), 1), ")")
+  lichen_message("Random effects: ", paste(random_effects, collapse = ", "))
   model
 }
 
 
 #' Run pre-DHARMa model sanity checks
 #'
-#' Evaluates four model diagnostics before running the full DHARMa simulation:
-#' 1. Maximum absolute coefficient
-#' 2. Maximum standard error
-#' 3. Convergence
-#' 4. Pseudo-R² (binomial) or dispersion parameter (NB)
+#' Evaluates four diagnostics on a fitted \code{glmmTMB} model before running
+#' the full DHARMa simulation:
+#' \enumerate{
+#'   \item Maximum absolute coefficient
+#'   \item Maximum standard error
+#'   \item Convergence
+#'   \item Dispersion (via \code{sigma()})
+#' }
 #'
-#' @param model A fitted `glm` or `glmmTMB` object.
+#' @param model A fitted \code{glmmTMB} object (from \code{fit_glmm_model()}).
 #' @param model_name Character. Human-readable name for messages.
-#'   If `NULL` (default), uses `attr(model, "model_name")` or the response
-#'   variable name.
-#' @return A named list: `status` ("VALID", "BORDERLINE", or "INVALID"),
-#'   `max_coef`, `max_se`, `flags` (character vector of individual results).
+#'   If \code{NULL} (default), uses \code{attr(model, "model_name")} or the
+#'   response variable name.
+#' @return A named list: \code{status} ("VALID", "BORDERLINE", or "INVALID"),
+#'   \code{max_coef}, \code{max_se}, \code{flags} (character vector).
 #' @examples
 #' checks <- run_pre_dharma_checks(m_parmelia)
 #' checks$status
@@ -169,9 +176,9 @@ run_pre_dharma_checks <- function(model, model_name = NULL) {
 
 #' Extract a tidy model summary tibble
 #'
-#' @param model A fitted `glm` or `glmmTMB` object.
-#' @param model_name Character. Label for the `model` column in the output.
-#'   Default: `attr(model, "model_name")`.
+#' @param model A fitted \code{glmmTMB} object (from \code{fit_glmm_model()}).
+#' @param model_name Character. Label for the \code{model} column in the output.
+#'   Default: \code{attr(model, "model_name")}.
 #' @return A tibble with columns: model, term, estimate, std_error, statistic,
 #'   p_value, sig.
 #' @examples
@@ -203,108 +210,24 @@ extract_model_summary <- function(model, model_name = NULL) {
   result
 }
 
-#' Fit a GLMM (Generalized Linear Mixed Model) using glmmTMB
-#'
-#' Extends \code{fit_glm_model()} by adding random effects to the formula.
-#' Uses \code{glmmTMB::glmmTMB()} for all families, including binomial and
-#' negative-binomial.
-#'
-#' **Why use a GLMM instead of a GLM?**
-#' Add random effects when your plots are grouped (e.g. by forest region,
-#' survey cluster, or observer) and you want to account for non-independence
-#' within groups.  The syntax change is minimal: specify the grouping
-#' structure in \code{random_effects} and \code{glmmTMB} handles the rest.
-#' DHARMa diagnostics work identically for GLMMs.
-#'
-#' @param data A data frame or tibble (pipe-friendly).
-#' @param response Character. Name of the response column.
-#' @param predictors Character vector of fixed-effect predictor column names.
-#' @param random_effects Character vector of random effect terms in
-#'   \code{lme4}/\code{glmmTMB} formula syntax.  Examples:
-#'   \code{c("(1|region)")} – random intercept by region;
-#'   \code{c("(1|region)", "(1|observer)")} – two crossed random intercepts;
-#'   \code{c("(dbh_max|region)")} – random slope + intercept.
-#'   Default: \code{get_project_config()$glmm$random_effects}.
-#' @param family A family object.  Default \code{binomial(link = "logit")} for
-#'   binary responses.  Use \code{glmmTMB::nbinom2} for count responses.
-#' @return A fitted \code{glmmTMB} object with attribute \code{model_name}.
-#' @examples
-#' m_parmelia_glmm <- fit_glmm_model(
-#'   modeling_data,
-#'   response       = "parmelia_agg_presence",
-#'   predictors     = predictors_scaled,
-#'   random_effects = c("(1|region)")
-#' )
-#'
-#' # Count response with NB family
-#' m_calicioids_glmm <- fit_glmm_model(
-#'   modeling_data,
-#'   response       = "calicioids_richness",
-#'   predictors     = predictors_scaled,
-#'   random_effects = c("(1|region)"),
-#'   family         = glmmTMB::nbinom2
-#' )
-fit_glmm_model <- function(data,
-                           response,
-                           predictors,
-                           random_effects = get_project_config()$glmm$random_effects,
-                           family         = stats::binomial(link = "logit")) {
-  if (!requireNamespace("glmmTMB", quietly = TRUE)) {
-    stop("Package 'glmmTMB' is required. Install from CRAN with: install.packages(\"glmmTMB\")")
-  }
-  stopifnot(is.data.frame(data), is.character(response),
-            is.character(predictors), length(predictors) > 0)
-  
-  if (length(random_effects) == 0) {
-    stop("fit_glmm_model() requires at least one random effect.\n",
-         "Set glmm$random_effects in utils.R or pass random_effects directly.\n",
-         "For a standard GLM with no random effects use fit_glm_model().")
-  }
-  
-  if (!response %in% colnames(data)) {
-    stop("Response column '", response, "' not found in data.")
-  }
-  missing_preds <- setdiff(predictors, colnames(data))
-  if (length(missing_preds) > 0) {
-    stop("Predictor column(s) not found: ", paste(missing_preds, collapse = ", "))
-  }
-  
-  fixed_part    <- paste(predictors, collapse = " + ")
-  re_part       <- paste(random_effects, collapse = " + ")
-  formula_str   <- paste0(response, " ~ ", fixed_part, " + ", re_part)
-  model_formula <- stats::as.formula(formula_str)
-  
-  model <- glmmTMB::glmmTMB(model_formula, data = data, family = family)
-  attr(model, "model_name") <- response
-  
-  lichen_message("Fitted GLMM: ", response,
-                 " (AIC = ", round(stats::AIC(model), 1), ")")
-  lichen_message("Random effects: ", paste(random_effects, collapse = ", "))
-  model
-}
 
-
-
+# -----------------------------------------------------------------------------
+# INTERNAL HELPERS
+# -----------------------------------------------------------------------------
 
 # Null-coalescing operator for base R
 `%||%` <- function(a, b) if (!is.null(a)) a else b
 
+# All models are glmmTMB; return "nb" for negative-binomial, "glmm" otherwise.
 .detect_family <- function(model) {
-  if (inherits(model, "glmmTMB")) {
-    fam_name <- tryCatch(model$modelInfo$family$family, error = function(e) "unknown")
-    if (grepl("nbinom", fam_name, ignore.case = TRUE)) return("nb")
-    return("glmm")
-  }
-  fam <- tryCatch(stats::family(model)$family, error = function(e) "unknown")
-  if (fam == "binomial") "binomial" else fam
+  fam_name <- tryCatch(model$modelInfo$family$family, error = function(e) "unknown")
+  if (grepl("nbinom", fam_name, ignore.case = TRUE)) "nb" else "glmm"
 }
 
+# glmmTMB stores fixed-effect coefficients under $coefficients$cond for both
+# binomial and NB families.
 .extract_coef_table <- function(model, family_type) {
-  if (family_type == "nb") {
-    summary(model)$coefficients$cond
-  } else {
-    summary(model)$coefficients
-  }
+  summary(model)$coefficients$cond
 }
 
 .check_threshold <- function(value, fail_at, warn_at, label) {
@@ -322,41 +245,24 @@ fit_glmm_model <- function(data,
   flag
 }
 
+# glmmTMB convergence is stored in model$fit$convergence (0 = converged).
 .check_convergence <- function(model, family_type) {
-  if (family_type == "nb") {
-    conv <- model$fit$convergence
-    converged <- conv == 0
-  } else {
-    converged <- model$converged
-    conv <- ifelse(converged, 0, 1)
-  }
+  conv      <- tryCatch(model$fit$convergence, error = function(e) 1L)
+  converged <- isTRUE(conv == 0L)
   icon <- if (converged) "\u2705" else "\U1F6A8"
   cat("  Converged:", converged, icon, "\n")
   if (converged) "PASS" else "FAIL"
 }
 
+# Use sigma() (residual SD / dispersion parameter) for all glmmTMB models.
 .check_fit_quality <- function(model, family_type) {
-  if (family_type == "binomial") {
-    pseudo_r2 <- 1 - (model$deviance / model$null.deviance)
-    flag <- dplyr::case_when(
-      pseudo_r2 > 0.95 ~ "FAIL",
-      pseudo_r2 > 0.85 ~ "WARNING",
-      TRUE              ~ "PASS"
-    )
-    icon <- if (flag == "PASS") "\u2705" else if (flag == "WARNING") "\u26A0\uFE0F" else "\U1F6A8"
-    cat("  Pseudo-R\u00b2:", round(pseudo_r2, 3), icon, "\n")
-    flag
-  } else if (family_type %in% c("nb", "glmm")) {
-    disp <- tryCatch(sigma(model), error = function(e) NA_real_)
-    if (is.na(disp)) {
-      cat("  Dispersion: not available\n")
-      return("PASS")
-    }
-    flag <- if (disp < 0.1 || disp > 100) "WARNING" else "PASS"
-    icon <- if (flag == "PASS") "\u2705" else "\u26A0\uFE0F"
-    cat("  Dispersion:", round(disp, 3), icon, "\n")
-    flag
-  } else {
-    "PASS"
+  disp <- tryCatch(sigma(model), error = function(e) NA_real_)
+  if (is.na(disp)) {
+    cat("  Dispersion: not available\n")
+    return("PASS")
   }
+  flag <- if (disp < 0.1 || disp > 100) "WARNING" else "PASS"
+  icon <- if (flag == "PASS") "\u2705" else "\u26A0\uFE0F"
+  cat("  Dispersion:", round(disp, 3), icon, "\n")
+  flag
 }
