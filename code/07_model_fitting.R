@@ -16,7 +16,7 @@ library(dplyr)
 library(tibble)
 library(glmmTMB)
 
-source(here::here("R", "utils.R"))
+source(here::here("utils.R"))
 
 
 # -----------------------------------------------------------------------------
