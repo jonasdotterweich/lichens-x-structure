@@ -130,11 +130,11 @@ get_project_config <- function() {
     #
     # NOTE: fit_glmm_model() will error if this is left empty.
     #       Set at least one random effect before running 06_model_fitting.R.
-    glmm = list(
-      random_effects = c((1|region))   # ← SET THIS: e.g. c("(1|forest_block)")
-    )
-  )
-}
+    #glmm = list(
+    #  random_effects = c((1|region))   # ← SET THIS: e.g. c("(1|forest_block)")
+    #)
+  #)
+#}
 
 
 # -----------------------------------------------------------------------------
