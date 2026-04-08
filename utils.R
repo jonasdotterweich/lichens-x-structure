@@ -107,34 +107,18 @@ get_project_config <- function() {
     ),
     
     
-    # ── GLMM SETTINGS ───────────────────────────────────────────────────────
-    # *** CHANGE THIS for your dataset ***
-    #
-    # Used by fit_glmm_model() in 07_model_fitting.R.
-    # Specify the grouping column(s) in your cleaned data that account for
-    # non-independence among plots (e.g. geographic region, plot cluster,
-    # field observer).
-    #
-    # glmmTMB syntax – choose the structure that matches your data:
-    #   "(1|region)"           – random intercept per geographic region
-    #   "(1|plot_cluster)"     – random intercept per plot cluster
-    #   "(1|observer)"         – random intercept per field observer
-    #   "(dbh_max|region)"     – random slope + intercept per region
-    #
-    # Multiple random effects (crossed or nested):
-    #   c("(1|region)", "(1|observer)")
-    #
-    # Example for Sumava NP – add the grouping column your colleague suggested,
-    # e.g. if you have a "forest_block" column in your data:
-    #   random_effects = c("(1|forest_block)")
-    #
-    # NOTE: fit_glmm_model() will error if this is left empty.
-    #       Set at least one random effect before running 06_model_fitting.R.
-    #glmm = list(
-    #  random_effects = c((1|region))   # ← SET THIS: e.g. c("(1|forest_block)")
-    #)
-  #)
-#}
+    # ── MODEL SETTINGS ───────────────────────────────────────────────────────
+    model = list(
+      use_random_effects = FALSE   # GLM-first: do not add random effects
+    ),
+    
+    # ── GLMM SETTINGS (kept for later) ───────────────────────────────────────
+    glmm = list(
+      random_effects = character() # e.g. c("(1|plot_cluster)") when enabled
+    )
+    )
+
+}
 
 
 # -----------------------------------------------------------------------------
