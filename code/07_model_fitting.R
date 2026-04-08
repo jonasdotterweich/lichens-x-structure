@@ -23,64 +23,38 @@ source(here::here("utils.R"))
 # PUBLIC FUNCTIONS
 # -----------------------------------------------------------------------------
 
-#' Fit a GLMM (Generalized Linear Mixed Model) using glmmTMB
+#' Fit a model (GLM-first, GLMM-optional) using glmmTMB
 #'
-#' The single model-fitting function for this framework.  Uses
-#' \code{glmmTMB::glmmTMB()} for all response types:
-#' \itemize{
-#'   \item Binary (presence/absence): \code{family = binomial(link = "logit")} (default)
-#'   \item Count (richness): \code{family = glmmTMB::nbinom2}
-#' }
+#' This is the single model-fitting function for this framework.
+#' It always uses glmmTMB as the engine.
 #'
-#' Random effects account for non-independence among plots that are grouped
-#' by region, survey cluster, observer, etc.  Set the default grouping in
-#' \code{utils.R → glmm$random_effects} (see that file for syntax examples).
+#' - If cfg$model$use_random_effects is FALSE (default): fits a fixed-effects-only
+#'   model (i.e. GLM behaviour) with glmmTMB.
+#' - If TRUE: fits a mixed model with the random effects specified in cfg$glmm$random_effects
+#'   or passed explicitly.
 #'
 #' @param data A data frame or tibble (pipe-friendly).
 #' @param response Character. Name of the response column.
 #' @param predictors Character vector of fixed-effect predictor column names.
 #' @param random_effects Character vector of random effect terms in
-#'   \code{lme4}/\code{glmmTMB} formula syntax.
-#'   Examples:
-#'   \code{c("(1|region)")} – random intercept per region;
-#'   \code{c("(1|region)", "(1|observer)")} – two crossed random intercepts;
-#'   \code{c("(dbh_max|region)")} – random slope + intercept.
-#'   Default: \code{get_project_config()$glmm$random_effects}.
-#' @param family A family object.  Default \code{binomial(link = "logit")}.
-#'   Use \code{glmmTMB::nbinom2} for count responses.
-#' @return A fitted \code{glmmTMB} object with attribute \code{model_name}.
-#' @examples
-#' # Binary response (presence/absence)
-#' m_parmelia <- fit_glmm_model(
-#'   modeling_data,
-#'   response       = "parmelia_agg_presence",
-#'   predictors     = predictors_scaled,
-#'   random_effects = c("(1|region)")
-#' )
-#'
-#' # Count response (species richness)
-#' m_calicioids <- fit_glmm_model(
-#'   modeling_data,
-#'   response       = "calicioids_richness",
-#'   predictors     = predictors_scaled,
-#'   random_effects = c("(1|region)"),
-#'   family         = glmmTMB::nbinom2
-#' )
-fit_glmm_model <- function(data,
-                           response,
-                           predictors,
-                           random_effects = get_project_config()$glmm$random_effects,
-                           family         = stats::binomial(link = "logit")) {
+#'   lme4/glmmTMB formula syntax. Default: get_project_config()$glmm$random_effects.
+#' @param family A family object. Default binomial(link="logit").
+#'   For richness/count responses, use glmmTMB::nbinom2.
+#' @return A fitted glmmTMB object with attribute model_name.
+fit_model <- function(data,
+                      response,
+                      predictors,
+                      random_effects = get_project_config()$glmm$random_effects,
+                      family         = stats::binomial(link = "logit")) {
+  
   if (!requireNamespace("glmmTMB", quietly = TRUE)) {
     stop("Package 'glmmTMB' is required. Install from CRAN: install.packages(\"glmmTMB\")")
   }
   stopifnot(is.data.frame(data), is.character(response),
             is.character(predictors), length(predictors) > 0)
   
-  if (length(random_effects) == 0) {
-    stop("fit_glmm_model() requires at least one random effect.\n",
-         "Set glmm$random_effects in utils.R or pass random_effects directly.")
-  }
+  cfg <- get_project_config()
+  use_re <- isTRUE(cfg$model$use_random_effects)
   
   if (!response %in% colnames(data)) {
     stop("Response column '", response, "' not found in data.")
@@ -90,7 +64,30 @@ fit_glmm_model <- function(data,
     stop("Predictor column(s) not found: ", paste(missing_preds, collapse = ", "))
   }
   
-  fixed_part    <- paste(predictors, collapse = " + ")
+  fixed_part <- paste(predictors, collapse = " + ")
+  
+  if (!use_re) {
+    # GLM-first mode: no random effects in the formula
+    lichen_message("Random effects disabled (GLM mode) → fitting fixed-effects-only model: ", response)
+    
+    formula_str   <- paste0(response, " ~ ", fixed_part)
+    model_formula <- stats::as.formula(formula_str)
+    
+    model <- glmmTMB::glmmTMB(model_formula, data = data, family = family)
+    attr(model, "model_name") <- response
+    
+    lichen_message("Fitted model: ", response, " (AIC = ", round(stats::AIC(model), 1), ")")
+    return(model)
+  }
+  
+  # GLMM mode
+  if (length(random_effects) == 0) {
+    stop(
+      "cfg$model$use_random_effects is TRUE, but no random effects were provided.\n",
+      "Set glmm$random_effects in utils.R or pass random_effects directly."
+    )
+  }
+  
   re_part       <- paste(random_effects, collapse = " + ")
   formula_str   <- paste0(response, " ~ ", fixed_part, " + ", re_part)
   model_formula <- stats::as.formula(formula_str)
@@ -103,6 +100,7 @@ fit_glmm_model <- function(data,
   lichen_message("Random effects: ", paste(random_effects, collapse = ", "))
   model
 }
+
 
 
 #' Run pre-DHARMa model sanity checks
