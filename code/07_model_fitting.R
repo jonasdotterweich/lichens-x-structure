@@ -101,7 +101,8 @@ fit_model <- function(data,
   model
 }
 
-
+# to make the "old code" ru afterwards (if not changed in ongoing scripts)
+fit_glmm_model <- fit_model
 
 #' Run pre-DHARMa model sanity checks
 #'
@@ -186,26 +187,41 @@ extract_model_summary <- function(model, model_name = NULL) {
     model_name <- attr(model, "model_name") %||% "model"
   }
   
-  family_type <- .detect_family(model)
-  coef_table  <- .extract_coef_table(model, family_type)
+  coef_table <- summary(model)$coefficients$cond
   
-  result <- tibble::as_tibble(coef_table, rownames = "term") |>
-    dplyr::rename_with(
-      ~dplyr::case_when(
-        . == "Estimate"   ~ "estimate",
-        . == "Std. Error" ~ "std_error",
-        grepl("z|t value", .) ~ "statistic",
-        grepl("Pr\\(", .) ~ "p_value",
-        TRUE              ~ .
-      )
-    ) |>
+  # Make a data.frame so we can safely reference colnames
+  df <- as.data.frame(coef_table)
+  df$term <- rownames(df)
+  rownames(df) <- NULL
+  
+  # Standardize names safely (no duplicates)
+  rename_map <- c(
+    "Estimate"   = "estimate",
+    "Std. Error" = "std_error",
+    "z value"    = "statistic",
+    "t value"    = "statistic",
+    "Pr(>|z|)"   = "p_value",
+    "Pr(>|t|)"   = "p_value"
+  )
+  
+  new_names <- names(df)
+  new_names <- ifelse(new_names %in% names(rename_map),
+                      unname(rename_map[new_names]),
+                      new_names)
+  names(df) <- new_names
+  
+  # If statistic/p_value still not found, keep going but warn
+  if (!("statistic" %in% names(df))) df$statistic <- NA_real_
+  if (!("p_value" %in% names(df))) df$p_value <- NA_real_
+  
+  out <- tibble::as_tibble(df) |>
     dplyr::mutate(
       model = model_name,
       sig   = sig_stars(p_value)
     ) |>
     dplyr::select(model, term, estimate, std_error, statistic, p_value, sig)
   
-  result
+  out
 }
 
 

@@ -21,21 +21,21 @@ source(here::here("utils.R"))
 #' Create composite deadwood variables
 #'
 #' Adds three derived columns to the data:
-#' * `deadwood_decay2to5` – sum of decay stages 2-5
-#' * `deadwood_decay4to5` – sum of decay stages 4-5 (highly decomposed)
+#' * `decay2to5` – sum of decay stages 2-5
+#' * `decay4to5` – sum of decay stages 4-5 (highly decomposed)
 #' * `pct_decay_advanced` – percentage of total deadwood in stages 4-5
 #'
 #' @param data A data frame or tibble containing individual decay-stage columns
-#'   (pipe-friendly). Expected columns: `deadwood_decay2`, `deadwood_decay3`,
-#'   `deadwood_decay4`, `deadwood_decay5`, `deadwood_total`.
+#'   (pipe-friendly). Expected columns: `decay2`, `decay3`,
+#'   `decay4`, `decay5`, `deadwood_total`.
 #' @return The input tibble with three new columns appended.
 #' @examples
 #' structure_fe <- structure_clean |> create_deadwood_composites()
 create_deadwood_composites <- function(data) {
   stopifnot(is.data.frame(data))
   
-  required <- c("deadwood_decay2", "deadwood_decay3",
-                "deadwood_decay4", "deadwood_decay5", "deadwood_total")
+  required <- c("decay2", "decay3",
+                "decay4", "decay5", "deadwood_total")
   missing_cols <- setdiff(required, colnames(data))
   if (length(missing_cols) > 0) {
     stop("create_deadwood_composites() requires these columns: ",
@@ -44,20 +44,23 @@ create_deadwood_composites <- function(data) {
   
   data <- data |>
     dplyr::mutate(
-      deadwood_decay2to5 = deadwood_decay2 + deadwood_decay3 +
-        deadwood_decay4 + deadwood_decay5,
-      deadwood_decay4to5 = deadwood_decay4 + deadwood_decay5,
+      decay2to5 = decay2 + decay3 +
+        decay4 + decay5,
+      decay4to5 = decay4 + decay5,
       pct_decay_advanced = dplyr::if_else(
         deadwood_total > 0,
-        (deadwood_decay4to5 / deadwood_total) * 100,
+        (decay4to5 / deadwood_total) * 100,
         0
       )
     )
   
   lichen_message("Created composite deadwood variables: ",
-                 "deadwood_decay2to5, deadwood_decay4to5, pct_decay_advanced")
+                 decay2to5, decay4to5, pct_decay_advanced)
   tibble::as_tibble(data)
 }
+##What is still to be checked there in the end: shouldn`t deadwood total be excluded as it does not exist in the structure_clean df?
+
+
 
 
 #' Select the core predictor set for modeling
@@ -84,7 +87,7 @@ select_core_predictors <- function(data,
     # Old-growth proxies
     "dbh_max", "n_living_trees_80cm", "n_dead_trees_50cm",
     # Deadwood
-    "deadwood_decay4to5", "deadwood_total",
+    "decay4to5", "deadwood_total",
     # Canopy
     "canopy_cover",
     # Tree composition

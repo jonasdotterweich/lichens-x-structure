@@ -53,7 +53,7 @@ cat("Raw lichen data loaded:", nrow(lichens_raw), "records,",
 # ==============================================================================
 # 2. TRANSLATE CZECH LABELS
 # ------------------------------------------------------------------------------
-# This translation map is study-specific (Czech NP Bohubin data).
+# This translation map is study-specific (Czech Sumava NP data).
 # A German or Slovak dataset will have different source strings.
 # Keep it here, not in a shared config.
 # ==============================================================================
@@ -94,7 +94,7 @@ OBJECT_ID_MAP <- c(
 )
 
 lichens <- lichens_raw %>%
-  mutate(`object ID` = recode(`object ID`, !!!OBJECT_ID_MAP))
+  dplyr::mutate(`object ID` = dplyr::recode(`object ID`, !!!OBJECT_ID_MAP))
 
 cat("Translation applied to 'object ID'\n")
 
