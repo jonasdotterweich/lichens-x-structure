@@ -159,6 +159,7 @@ validate_input_data <- function(data,
 #'   pct_missing, min_val, max_val, n_unique.  Returned invisibly.
 #' @examples
 #' describe_data(modeling_data)
+#' 
 describe_data <- function(data) {
   stopifnot(is.data.frame(data))
   

@@ -620,7 +620,7 @@ SPECIES_GROUPS <- list(
   parmelia_agg = c("Parmelia saxatilis", "Parmelia sulcata"),
   
   # Group 2: Mycoblastus — core OGF specialists
-  mycoblastus = c("Mycoblastus sanguinarius", "Mycoblastus affinis"),
+ # mycoblastus = c("Mycoblastus sanguinarius", "Mycoblastus affinis"),
   
   # Group 3: Ochrolechia — OGF associates
   ochrolechia = c(
@@ -820,7 +820,7 @@ lichen_clean <- lichen_with_id %>%
     parmelia_agg_presence,
     ochrolechia_presence,
     core_ogf_presence,
-    mycoblastus_presence,    # Low prevalence — flag in study_config.R
+    #mycoblastus_presence,    # Low prevalence — flag in study_config.R
     xylographa_presence,
     elite_rare_presence
   ) %>%

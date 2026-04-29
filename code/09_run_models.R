@@ -22,11 +22,12 @@ PATH_LICHEN    <- here::here("outputs", "Sumava", "lichen_clean.csv")
 PATH_STRUCTURE <- here::here("outputs", "Sumava", "structure_clean.csv")
 #PATH_MODELING_DATA <- here::here("outputs", "Sumava", "modeling_data_merged.csv")
 
-OUT_DIR_MODELS  <- here::here("outputs", "Sumava", "models")
-OUT_DIR_REPORTS <- here::here("outputs", "Sumava", "reports")
+OUT_DIR_MODELS_GAM  <- here::here("outputs", "Sumava", "models_gam")
+OUT_DIR_REPORTS_GAM <- here::here("outputs", "Sumava", "reports_gam")
+FIG_DIR_GAM        <- here::here("figures", "gam")
 OUT_DIR_MODELING_DATA <- here::here("outputs", "Sumava")
-dir.create(OUT_DIR_MODELS,  recursive = TRUE, showWarnings = FALSE)
-dir.create(OUT_DIR_REPORTS, recursive = TRUE, showWarnings = FALSE)
+dir.create(OUT_DIR_MODELS_GAM ,  recursive = TRUE, showWarnings = FALSE)
+dir.create(OUT_DIR_REPORTS_GAM, recursive = TRUE, showWarnings = FALSE)
 
 # ---- Load + merge ----
 lichen_clean    <- readr::read_csv(PATH_LICHEN, show_col_types = FALSE)
@@ -81,7 +82,7 @@ validate_input_data(
 # Validate response columns exist / prevalence OK
 resp_report <- validate_response_variables(modeling_data)
 readr::write_csv(resp_report,
-                 file.path(OUT_DIR_REPORTS, "qc_response_variables.csv"))
+                 file.path(OUT_DIR_REPORTS_GAM, "qc_response_variables.csv"))
 
 # ---- Categorical encoding (optional but useful) ----
 # (only runs if those columns exist)
@@ -101,7 +102,7 @@ modeling_data <- impute_missing_values_if_needed(
     !dplyr::matches("richness$"),
   threshold_pct = 5,
   strategy = "median",
-  report_path = file.path(OUT_DIR_REPORTS, "qc_imputation_report.csv")
+  report_path = file.path(OUT_DIR_REPORTS_GAM, "qc_imputation_report.csv")
 )
 
 
@@ -167,7 +168,7 @@ for (resp in responses_cnt) {
 # Save model objects
 for (nm in names(models)) {
   saveRDS(models[[nm]],
-          file.path(OUT_DIR_MODELS, paste0("model_", nm, ".rds")))
+          file.path(OUT_DIR_MODELS_GAM , paste0("model_", nm, ".rds")))
 }
 
 # Save coefficient summaries
@@ -176,7 +177,7 @@ coef_tbl <- dplyr::bind_rows(lapply(names(models), function(nm) {
 }))
 
 readr::write_csv(coef_tbl,
-                 file.path(OUT_DIR_MODELS, "model_coefficients_all.csv"))
+                 file.path(OUT_DIR_MODELS_GAM , "model_coefficients_all.csv"))
 
 # ---- Spatial autocorrelation (raw responses) ----
 raw_spatial <- calculate_morans_i(
@@ -185,21 +186,21 @@ raw_spatial <- calculate_morans_i(
   coords_cols = c("X", "Y")
 )
 readr::write_csv(raw_spatial,
-                 file.path(OUT_DIR_REPORTS, "qc_morans_i_raw.csv"))
+                 file.path(OUT_DIR_REPORTS_GAM, "qc_morans_i_raw.csv"))
 
 # ---- Diagnostics (DHARMa etc.) ----
 diag_report <- compile_diagnostic_report(
   models      = models,
   data        = modeling_data,
   raw_spatial = raw_spatial,
-  output_dir  = OUT_DIR_REPORTS
+  output_dir  = OUT_DIR_REPORTS_GAM
 )
 
 readr::write_csv(diag_report$dharma_summary,
-                 file.path(OUT_DIR_REPORTS, "qc_dharma_summary.csv"))
+                 file.path(OUT_DIR_REPORTS_GAM, "qc_dharma_summary.csv"))
 readr::write_csv(diag_report$spatial_comparison,
-                 file.path(OUT_DIR_REPORTS, "qc_spatial_comparison.csv"))
+                 file.path(OUT_DIR_REPORTS_GAM, "qc_spatial_comparison.csv"))
 
 cat("\n✅ 09_run_models.R complete.\n")
-cat("   Models saved to:  ", OUT_DIR_MODELS, "\n", sep = "")
-cat("   Reports saved to: ", OUT_DIR_REPORTS, "\n", sep = "")
+cat("   Models saved to:  ", OUT_DIR_MODELS_GAM , "\n", sep = "")
+cat("   Reports saved to: ", OUT_DIR_REPORTS_GAM, "\n", sep = "")

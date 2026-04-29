@@ -99,7 +99,7 @@ get_project_config <- function() {
         "parmelia_agg_presence",
         "ochrolechia_presence",
         "core_ogf_presence",
-        "mycoblastus_presence",
+       # "mycoblastus_presence",  # mycoblastus switched off for now due to model fitting issues 
         "xylographa_presence",
         "elite_rare_presence"
       ),

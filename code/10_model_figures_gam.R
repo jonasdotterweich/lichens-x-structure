@@ -1,5 +1,5 @@
 # =============================================================================
-# 10_model_figures.R
+# 10_model_figures_gam.R
 # Create coefficient "importance" barplots + response curves for all fitted models
 # =============================================================================
 
@@ -16,7 +16,7 @@ source(here::here("code", "07_model_fitting.R"))  # for extract_model_summary()
 
 # ---- Paths ----
 MODELS_DIR  <- here::here("outputs", "Sumava", "models")
-FIG_DIR     <- here::here("figures", "gam")  
+FIG_DIR     <- here::here("figures")  # as requested: working dir
 REPORTS_DIR <- here::here("outputs", "Sumava", "reports")
 
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
