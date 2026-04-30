@@ -176,7 +176,7 @@ candidate_predictor_sets <- list(
   full_decay = list(
     smooth_terms = smooth_base,
     linear_terms = .keep("dbh_max", "dbh_sd", "n_dead_50cm", "ba_spruce", "ba_beech",
-                         decay_present)
+                          decay_present)
   ),
 
   # 7. Deadwood-centric: reduced smooth set, no tree-comp, no decay
@@ -297,6 +297,7 @@ lichen_banner("GAM Tuning: Candidate Predictor Sets \u00d7 k")
 all_tuning_tables <- list()   # accumulate per-response tables for cross-summary
 
 .run_group <- function(responses, family_fn, family_label) {
+  group_tables <- list()
   for (resp in responses) {
     lichen_banner(paste("Tuning:", resp, "|", family_label))
 
@@ -330,12 +331,15 @@ all_tuning_tables <- list()   # accumulate per-response tables for cross-summary
       }
     }
 
-    all_tuning_tables[[resp]] <<- resp_tbl
+    group_tables[[resp]] <- resp_tbl
   }
+  group_tables
 }
 
-.run_group(responses_bin, function() stats::binomial(link = "logit"), "binomial")
-.run_group(responses_cnt, function() mgcv::nb(link = "log"),          "nb")
+all_tuning_tables <- c(
+  .run_group(responses_bin, function() stats::binomial(link = "logit"), "binomial"),
+  .run_group(responses_cnt, function() mgcv::nb(link = "log"),          "nb")
+)
 
 
 # =============================================================================
@@ -358,8 +362,8 @@ top3_tbl <- top3_tbl |>
   dplyr::rowwise() |>
   dplyr::mutate(
     signature = .make_signature(
-      strsplit(smooth_terms_used, "; ")[[1]],
-      strsplit(linear_terms_used, "; ")[[1]]
+      unlist(strsplit(smooth_terms_used %||% "", "; ", fixed = TRUE)),
+      unlist(strsplit(linear_terms_used %||% "", "; ", fixed = TRUE))
     )
   ) |>
   dplyr::ungroup()
