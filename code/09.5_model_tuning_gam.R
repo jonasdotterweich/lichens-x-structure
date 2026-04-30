@@ -29,6 +29,7 @@ library(tibble)
 
 source(here::here("utils.R"))
 source(here::here("code", "07_model_fitting_gam.R"))
+sourcer(here::here("code", "09_run_models_gam.R"))
 
 cfg <- get_project_config()
 
