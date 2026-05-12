@@ -1,5 +1,5 @@
 # =============================================================================
-# 10_model_figures_gam.R
+# 10_model_figures_gam_a.R
 # Create coefficient "importance" barplots + response curves for all fitted models
 # =============================================================================
 

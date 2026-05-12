@@ -110,21 +110,28 @@ modeling_data <- impute_missing_values_if_needed(
 
 
 # ---- Choose predictors ----
-predictor_cols <- c( "elevation", "volume_snags", "canopy_cover","dbh_max", 
-                     "dbh_sd", "n_dead_50cm",
-                     "ba_spruce", "ba_beech", "decay2", "decay3", "decay4", 
-                     "decay5"
-)
- 
-# Decide which ones are smooth vs linear
-smooth_terms <- c("elevation", "volume_snags", "canopy_cover")
-linear_terms <- setdiff(predictor_cols, smooth_terms)  
+# The predictors are chosen based on the 09.5_model tuning script 
+#therefore the ful predictor set is switched off
+
+#predictor_cols <- c( "elevation", "volume_snags", "canopy_cover","dbh_max", 
+#                     "dbh_sd", "n_dead_50cm",
+#                     "ba_spruce", "ba_beech", "decay2", "decay3", "decay4", 
+#                     "decay5"
+#)
  
 
-## A reduced set of predictors for testing nonfitting models:
+# Decide which ones are smooth vs linear (old, performed on full set)
+#smooth_terms <- c("elevation", "volume_snags", "canopy_cover")
+#linear_terms <- setdiff(predictor_cols, smooth_terms)  
+ 
+smooth_terms <- c("canopy_cover", "elevation", "volume_snags")
+linear_terms <- c("ba_beech", "ba_spruce", "n_dead_50cm")
 
-linear_terms_core <- c("dbh_max", "n_dead_50cm", "logged", "logging_intensity")
-smooth_terms_core <- smooth_terms  # keep elevation, volume_snags, canopy_cover
+predictor_cols <- c(smooth_terms, linear_terms)
+
+## A reduced set of predictors for testing nonfitting models (e.g. mycoblastus_presence)-> therefore switsched off
+#linear_terms_core <- c("dbh_max", "n_dead_50cm", "logged", "logging_intensity")
+# smooth_terms_core <- smooth_terms  # keep elevation, volume_snags, canopy_cover
 
 
 # ---- Scaling ---
@@ -171,7 +178,7 @@ for (resp in responses_bin) {
  # if (resp == "mycoblastus_presence") {    # this is to use a reduced predictor on lichen groups were the fitting of the model failed
  #   lin <- linear_terms_core
  #   sm  <- smooth_terms_core
-  }
+  
   
   models[[resp]] <- fit_gam_model(
     data = modeling_data,
@@ -219,10 +226,9 @@ for (resp in responses_bin) {
       run_morans_i = TRUE
     )
   }
+}
   
   
-
-
 
 # Count models (negative binomial)
 for (resp in responses_cnt) {
