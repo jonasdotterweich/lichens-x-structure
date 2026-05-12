@@ -9,6 +9,7 @@ library(readr)
 
 if (!requireNamespace("ggeffects", quietly = TRUE)) install.packages("ggeffects")
 library(ggeffects)
+`%||%` <- function(a, b) if (!is.null(a)) a else b
 
 # ---- Settings ----
 indicator <- "elite_rare_presence" # "calicioids_richness"   "parmelia_agg_presence" "ochrolechia_presence"  "core_ogf_presence"     "xylographa_presence"   "elite_rare_presence"
@@ -23,12 +24,33 @@ hold_at <- list()  # e.g. list(elevation = 900)
 # ---- Paths ----
 MODELS_DIR <- here::here("outputs", "Sumava", "models_gam")
 FIG_DIR    <- here::here("figures", "gam_thresholds", indicator)
+MANIFEST_PATH <- here::here("outputs", "Sumava", "reports_gam", "tuning_gam", "selected_spec_manifest.csv")
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # ---- Load model ----
 model_path <- file.path(MODELS_DIR, paste0("model_gam_", indicator, ".rds"))
 stopifnot(file.exists(model_path))
 m <- readRDS(model_path)
+
+.split_terms <- function(x) {
+  x <- x %||% ""
+  if (length(x) == 0 || is.na(x) || !nzchar(x)) return(character(0))
+  trimws(strsplit(x, ";", fixed = TRUE)[[1]])
+}
+
+if (file.exists(MANIFEST_PATH)) {
+  manifest <- readr::read_csv(MANIFEST_PATH, show_col_types = FALSE)
+  if (indicator %in% manifest$response) {
+    row <- manifest |>
+      dplyr::filter(response == indicator) |>
+      dplyr::slice(1)
+    covariates <- unique(c(
+      .split_terms(row$smooth_terms_used),
+      .split_terms(row$linear_terms_used)
+    ))
+    covariates <- covariates[!(covariates %in% c("X", "Y"))]
+  }
+}
 
 # Helper: find approximate crossings of y(x) with cutoff
 find_crossings <- function(x, y, cutoff) {
