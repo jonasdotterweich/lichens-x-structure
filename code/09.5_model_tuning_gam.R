@@ -1,42 +1,25 @@
 # =============================================================================
 # 09.5_model_tuning_gam.R
-# GAM predictor-set and basis-dimension tuning
-# =============================================================================
-#
-# Stage 1 tuning: for every response variable (binary + count), fits a grid of
-# candidate non-spatial GAMs that vary:
-#
-#   1. Candidate predictor blocks (>= 6 sets, ecologically motivated).
-#      Decay dummy variables (decay2–decay5) are toggled as a block.
-#
-#   2. k – 1D smooth basis dimension – across c(4, 5, 7, 10).
-#
-# Per-response outputs
-#   - Tuning table (CSV):  outputs/Sumava/reports_gam/tuning_gam/tuning_<resp>.csv
-#   - Top-3 models (RDS):  outputs/Sumava/models_gam/tuning_gam/tuning_<resp>_rank<N>_*.rds
-#
-# Cross-response output
-#   - Covariate-signature frequency table (CSV):
-#       outputs/Sumava/reports_gam/tuning_gam/cross_response_signature_summary.csv
-#
-# Usage
-#   source(here::here("code", "09.5_model_tuning_gam.R"))
+# Full GAM tuning across covariates, smooth/linear shape, and spatial options
 # =============================================================================
 
 library(dplyr)
 library(readr)
 library(tibble)
+library(tidyr)
+library(purrr)
 
 source(here::here("utils.R"))
+source(here::here("code", "02_data_loading.R"))
+source(here::here("code", "03_data_cleaning.R"))
+source(here::here("code", "06_lichen_processing.R"))
 source(here::here("code", "07_model_fitting_gam.R"))
-source(here::here("code", "08_model_diagnostics_gam.R"))  # for run_gam_diagnostics() 
-source(here::here("code", "09_run_models_gam.R"))          # for validate_response_variables()
+source(here::here("code", "08_model_diagnostics_gam.R"))
 
 cfg <- get_project_config()
 
 
-# ---- Output directories (created only if needed) ----------------------------
-
+# ---- Output directories -------------------------------------------------------
 OUT_DIR_MODELS_GAM  <- here::here("outputs", "Sumava", "models_gam")
 OUT_DIR_REPORTS_GAM <- here::here("outputs", "Sumava", "reports_gam")
 
@@ -48,8 +31,7 @@ dir.create(OUT_DIR_TUNING_REPORTS, recursive = TRUE, showWarnings = FALSE)
 
 
 # =============================================================================
-# SECTION 1 – Load, merge, and preprocess data
-# (Steps identical to 09_run_models_gam.R to ensure modeling_data is the same)
+# SECTION 1 – Load and preprocess data
 # =============================================================================
 
 lichen_banner("Loading and Preprocessing Data")
@@ -60,7 +42,6 @@ PATH_STRUCTURE <- here::here("outputs", "Sumava", "structure_clean.csv")
 lichen_clean    <- readr::read_csv(PATH_LICHEN,    show_col_types = FALSE)
 structure_clean <- readr::read_csv(PATH_STRUCTURE, show_col_types = FALSE)
 
-# Verify coordinate consistency before merging
 coords_check <- dplyr::inner_join(
   lichen_clean    |> dplyr::select(plot_id, X, Y),
   structure_clean |> dplyr::select(plot_id, X, Y),
@@ -82,15 +63,12 @@ if (n_mismatch > 0) {
   stop("Coordinate mismatch between lichen_clean and structure_clean for ",
        n_mismatch, " plot(s). Fix before continuing.")
 } else {
-  cat("\u2713 Coordinates match for all joined plots (tol =", tol, ")\n")
+  cat("✓ Coordinates match for all joined plots (tol =", tol, ")\n")
 }
 
-# Drop duplicate coord columns from structure before join
 structure_clean <- structure_clean |> dplyr::select(-X, -Y)
-
 modeling_data <- dplyr::inner_join(lichen_clean, structure_clean, by = "plot_id")
 
-# Validate merged data
 validate_input_data(
   modeling_data,
   required_cols = c("plot_id", "X", "Y"),
@@ -100,7 +78,6 @@ validate_input_data(
 
 validate_response_variables(modeling_data)
 
-# Impute missing predictor values (median, max 5 % missing; identical policy to 09_run)
 modeling_data <- impute_missing_values_if_needed(
   modeling_data,
   cols = dplyr::where(is.numeric) &
@@ -113,10 +90,9 @@ modeling_data <- impute_missing_values_if_needed(
 
 
 # =============================================================================
-# SECTION 2 – Define response groups and candidate predictor sets
+# SECTION 2 – Responses and candidate predictor sets
 # =============================================================================
 
-# Response groups – filter to columns that actually exist in modeling_data
 responses_bin <- intersect(cfg$lichen_groups$binary, names(modeling_data))
 responses_cnt <- intersect(cfg$lichen_groups$count,  names(modeling_data))
 
@@ -127,212 +103,312 @@ if (length(responses_bin) == 0 && length(responses_cnt) == 0) {
 lichen_message("Binary responses:  ", paste(responses_bin, collapse = ", "))
 lichen_message("Count  responses:  ", paste(responses_cnt, collapse = ", "))
 
-# ---- Decay block (toggled on/off as a unit) ---------------------------------
+.keep <- function(...) intersect(c(...), names(modeling_data))
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
 decay_block   <- c("decay2", "decay3", "decay4", "decay5")
 decay_present <- intersect(decay_block, names(modeling_data))
+smooth_base   <- intersect(c("elevation", "volume_snags", "canopy_cover"), names(modeling_data))
 
-# ---- Smooth terms base (same as 09_run_models_gam.R) -----------------------
-smooth_base <- intersect(c("elevation", "volume_snags", "canopy_cover"), names(modeling_data))
-
-# ---- Helper: intersect safely with modeling_data columns --------------------
-.keep <- function(...) intersect(c(...), names(modeling_data))
-
-# ---- Candidate predictor sets (8 ecologically motivated blocks) -------------
-#
-# Each element is a named list with smooth_terms and linear_terms.
-# Decay dummies are included/excluded as a complete block.
-#
+# fixed_linear_terms are always linear.
+# nonlinear_candidates are iterated through all smooth/linear allocations.
 candidate_predictor_sets <- list(
-  
-  # 1. Forest structure core (diameter, dead-wood density) — no decay, no tree comp
   structure_core = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("dbh_max", "dbh_sd", "n_dead_50cm")
+    fixed_linear_terms   = .keep("dbh_max", "dbh_sd", "n_dead_50cm"),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 2. Forest structure core + decay block
   structure_core_decay = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("dbh_max", "dbh_sd", "n_dead_50cm", decay_present)
+    fixed_linear_terms   = .keep("dbh_max", "dbh_sd", "n_dead_50cm", decay_present),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 3. Tree species composition + dead wood — no decay
   composition = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("ba_spruce", "ba_beech", "n_dead_50cm")
+    fixed_linear_terms   = .keep("ba_spruce", "ba_beech", "n_dead_50cm"),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 4. Tree species composition + dead wood + decay block
   composition_decay = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("ba_spruce", "ba_beech", "n_dead_50cm", decay_present)
+    fixed_linear_terms   = .keep("ba_spruce", "ba_beech", "n_dead_50cm", decay_present),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 5. Full linear set (structure + composition) — no decay
   full_nodecay = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("dbh_max", "dbh_sd", "n_dead_50cm", "ba_spruce", "ba_beech")
+    fixed_linear_terms   = .keep("dbh_max", "dbh_sd", "n_dead_50cm", "ba_spruce", "ba_beech"),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 6. Full linear set + decay block (mirrors 09_run_models_gam.R default)
   full_decay = list(
-    smooth_terms = smooth_base,
-    linear_terms = .keep("dbh_max", "dbh_sd", "n_dead_50cm", "ba_spruce", "ba_beech",
-                         decay_present)
+    fixed_linear_terms   = .keep("dbh_max", "dbh_sd", "n_dead_50cm", "ba_spruce", "ba_beech", decay_present),
+    nonlinear_candidates = smooth_base
   ),
-  
-  # 7. Deadwood-centric: reduced smooth set, no tree-comp, no decay
   deadwood_centric = list(
-    smooth_terms = .keep("volume_snags", "canopy_cover"),
-    linear_terms = .keep("dbh_max", "n_dead_50cm", "ba_spruce")
+    fixed_linear_terms   = .keep("dbh_max", "n_dead_50cm", "ba_spruce"),
+    nonlinear_candidates = .keep("volume_snags", "canopy_cover")
   ),
-  
-  # 8. Deadwood-centric + decay block
   deadwood_centric_decay = list(
-    smooth_terms = .keep("volume_snags", "canopy_cover"),
-    linear_terms = .keep("dbh_max", "n_dead_50cm", "ba_spruce", decay_present)
+    fixed_linear_terms   = .keep("dbh_max", "n_dead_50cm", "ba_spruce", decay_present),
+    nonlinear_candidates = .keep("volume_snags", "canopy_cover")
   )
 )
 
-# Remove any candidate where both term vectors are empty (data-driven safety)
 candidate_predictor_sets <- Filter(
-  function(x) length(x$smooth_terms) + length(x$linear_terms) > 0,
+  function(x) {
+    length(unique(c(x$fixed_linear_terms, x$nonlinear_candidates))) > 0
+  },
   candidate_predictor_sets
 )
 
-lichen_message("Candidate predictor sets: ", length(candidate_predictor_sets))
-
-# ---- k values for 1D smooths ------------------------------------------------
-k_values <- c(4L, 5L, 7L, 10L)
-
-# ---- Top-N models to save per response --------------------------------------
-TOP_N <- 3L
+k_values         <- c(4L, 5L, 7L, 10L)
+spatial_values   <- c(FALSE, TRUE)
+k_spatial_values <- c(15L, 30L, 60L)
+TOP_N            <- 3L
+DELTA_AIC_TOL    <- 2
 
 
 # =============================================================================
-# SECTION 3 – Tuning helper functions
+# SECTION 3 – Model-spec grid + diagnostics helpers
 # =============================================================================
 
-#' Build a canonical covariate-signature string for a model candidate
-.make_signature <- function(smooth_terms, linear_terms) {
+.all_subsets <- function(x) {
+  if (length(x) == 0) return(list(character(0)))
+  out <- vector("list", 2^length(x))
+  idx <- 0L
+  for (mask in 0:(2^length(x) - 1)) {
+    idx <- idx + 1L
+    bits <- as.logical(intToBits(mask))[seq_along(x)]
+    out[[idx]] <- x[bits]
+  }
+  out
+}
+
+.term_string <- function(x) {
+  x <- sort(unique(x))
+  if (length(x) == 0) "" else paste(x, collapse = "; ")
+}
+
+.make_spec_id <- function(set_name, smooth_terms, linear_terms, k, spatial, k_spatial) {
   paste0(
-    "s(", paste(sort(smooth_terms), collapse = "+"), ")",
-    "__l(", paste(sort(linear_terms), collapse = "+"), ")"
+    "set=", set_name,
+    "__s(", paste(sort(unique(smooth_terms)), collapse = "+"), ")",
+    "__l(", paste(sort(unique(linear_terms)), collapse = "+"), ")",
+    "__k=", k,
+    "__sp=", ifelse(isTRUE(spatial), "1", "0"),
+    "__ksp=", ifelse(isTRUE(spatial), as.character(k_spatial), "NA")
   )
 }
 
+.extract_diag_metrics <- function(model, data) {
+  k_index_min <- NA_real_
+  k_pvalue_min <- NA_real_
+  k_problem_any <- NA
+  concurvity_max_worst <- NA_real_
+  concurvity_ok <- NA
+  resid_morans_i <- NA_real_
+  resid_morans_p <- NA_real_
+  resid_spatial_ok <- NA
 
-#' Fit all candidates × k for a single response; return tuning table + model list
-.tune_response <- function(resp, family_fn) {
-  
-  tuning_rows  <- vector("list", length(candidate_predictor_sets) * length(k_values))
-  model_store  <- list()   # key: "candname_k<val>"
-  row_idx      <- 0L
-  
-  for (cand_name in names(candidate_predictor_sets)) {
-    cand <- candidate_predictor_sets[[cand_name]]
-    
-    for (k_val in k_values) {
-      row_idx    <- row_idx + 1L
-      model_key  <- paste0(cand_name, "_k", k_val)
-      
-      fit_result <- tryCatch({
-        m   <- fit_gam_model(
-          data         = modeling_data,
-          response     = resp,
-          linear_terms = cand$linear_terms,
-          smooth_terms = cand$smooth_terms,
-          family       = family_fn(),
-          spatial      = FALSE,
-          k            = k_val
-        )
-        sm  <- summarize_gam_fit(m, model_name = resp)
-        list(model = m, summary = sm, error = NULL)
-      }, error = function(e) {
-        lichen_warning("FAILED  ", resp, " / ", cand_name, " / k=", k_val,
-                       ": ", conditionMessage(e))
-        list(model = NULL, summary = NULL, error = conditionMessage(e))
-      })
-      
-      if (!is.null(fit_result$model)) {
-        model_store[[model_key]] <- fit_result$model
+  kcheck <- tryCatch(mgcv::k.check(model), error = function(e) NULL)
+  if (!is.null(kcheck) && nrow(kcheck) > 0) {
+    k_index <- suppressWarnings(as.numeric(kcheck[, "k-index"]))
+    p_vals  <- suppressWarnings(as.numeric(kcheck[, "p-value"]))
+    k_index_min  <- suppressWarnings(min(k_index, na.rm = TRUE))
+    k_pvalue_min <- suppressWarnings(min(p_vals, na.rm = TRUE))
+    k_problem_any <- any(k_index < 1 & p_vals < 0.05, na.rm = TRUE)
+  }
+
+  conc <- tryCatch(mgcv::concurvity(model, full = TRUE), error = function(e) NULL)
+  if (!is.null(conc) && "worst" %in% rownames(conc)) {
+    worst_vals <- suppressWarnings(as.numeric(conc["worst", ]))
+    concurvity_max_worst <- suppressWarnings(max(worst_vals, na.rm = TRUE))
+    concurvity_ok <- is.finite(concurvity_max_worst) && concurvity_max_worst <= 0.9
+  }
+
+  moran <- tryCatch(
+    calculate_residual_morans_i(model, data, coords_cols = c("X", "Y")),
+    error = function(e) NULL
+  )
+  if (!is.null(moran) && nrow(moran) > 0) {
+    resid_morans_i <- suppressWarnings(as.numeric(moran$morans_i[1]))
+    resid_morans_p <- suppressWarnings(as.numeric(moran$p_value[1]))
+    resid_spatial_ok <- is.na(resid_morans_p) || resid_morans_p >= 0.05
+  }
+
+  k_ok <- ifelse(is.na(k_problem_any), NA, !k_problem_any)
+  diagnostics_ok <- isTRUE(k_ok) && isTRUE(concurvity_ok) &&
+    (isTRUE(resid_spatial_ok) || is.na(resid_spatial_ok))
+
+  tibble::tibble(
+    k_index_min = k_index_min,
+    k_pvalue_min = k_pvalue_min,
+    k_ok = k_ok,
+    concurvity_max_worst = concurvity_max_worst,
+    concurvity_ok = concurvity_ok,
+    resid_morans_i = resid_morans_i,
+    resid_morans_p = resid_morans_p,
+    resid_spatial_ok = resid_spatial_ok,
+    diagnostics_ok = diagnostics_ok
+  )
+}
+
+.build_model_specs <- function() {
+  specs <- list()
+  idx <- 0L
+
+  for (set_name in names(candidate_predictor_sets)) {
+    set_cfg <- candidate_predictor_sets[[set_name]]
+    fixed_lin <- sort(unique(set_cfg$fixed_linear_terms))
+    nonlin_pool <- sort(unique(set_cfg$nonlinear_candidates))
+    smooth_subsets <- .all_subsets(nonlin_pool)
+
+    for (smooth_terms in smooth_subsets) {
+      smooth_terms <- sort(unique(smooth_terms))
+      linear_terms <- sort(unique(c(fixed_lin, setdiff(nonlin_pool, smooth_terms))))
+
+      if (length(smooth_terms) + length(linear_terms) == 0) next
+
+      for (k_val in k_values) {
+        for (spatial_val in spatial_values) {
+          ksp_values <- if (isTRUE(spatial_val)) k_spatial_values else NA_integer_
+          for (ksp in ksp_values) {
+            idx <- idx + 1L
+            spec_id <- .make_spec_id(
+              set_name,
+              smooth_terms = smooth_terms,
+              linear_terms = linear_terms,
+              k = k_val,
+              spatial = spatial_val,
+              k_spatial = ksp
+            )
+
+            specs[[idx]] <- list(
+              spec_index = idx,
+              spec_id = spec_id,
+              candidate_name = set_name,
+              smooth_terms = smooth_terms,
+              linear_terms = linear_terms,
+              k = as.integer(k_val),
+              spatial = isTRUE(spatial_val),
+              k_spatial = ifelse(isTRUE(spatial_val), as.integer(ksp), NA_integer_)
+            )
+          }
+        }
       }
-      
-      sm <- fit_result$summary
-      tuning_rows[[row_idx]] <- tibble::tibble(
-        response          = resp,
-        candidate_id      = row_idx,
-        candidate_name    = cand_name,
-        k                 = k_val,
-        smooth_terms_used = paste(cand$smooth_terms, collapse = "; "),
-        linear_terms_used = paste(cand$linear_terms,  collapse = "; "),
-        spatial           = FALSE,
-        AIC           = if (!is.null(sm)) sm$AIC           else NA_real_,
-        dev_explained = if (!is.null(sm)) sm$dev_explained else NA_real_,
-        r_sq          = if (!is.null(sm)) sm$r_sq          else NA_real_,
-        n             = if (!is.null(sm)) sm$n             else NA_integer_,
-        family        = if (!is.null(sm)) sm$family        else NA_character_,
-        link          = if (!is.null(sm)) sm$link          else NA_character_,
-        fit_error     = if (!is.null(fit_result$error)) fit_result$error else NA_character_
-      )
     }
   }
-  
+
+  specs
+}
+
+model_specs <- .build_model_specs()
+lichen_message("Candidate predictor sets: ", length(candidate_predictor_sets))
+lichen_message("Total model specs: ", length(model_specs))
+
+
+# =============================================================================
+# SECTION 4 – Tuning execution
+# =============================================================================
+
+.tune_response <- function(resp, family_fn) {
+  tuning_rows <- vector("list", length(model_specs))
+  model_store <- list()
+
+  for (i in seq_along(model_specs)) {
+    spec <- model_specs[[i]]
+    model_key <- sprintf("spec_%05d", i)
+
+    fit_result <- tryCatch({
+      m <- fit_gam_model(
+        data         = modeling_data,
+        response     = resp,
+        linear_terms = spec$linear_terms,
+        smooth_terms = spec$smooth_terms,
+        family       = family_fn(),
+        spatial      = spec$spatial,
+        k            = spec$k,
+        k_spatial    = spec$k_spatial %||% 30L
+      )
+      sm  <- summarize_gam_fit(m, model_name = resp)
+      diag <- .extract_diag_metrics(m, modeling_data)
+      list(model = m, summary = sm, diag = diag, error = NULL)
+    }, error = function(e) {
+      lichen_warning("FAILED ", resp, " / ", spec$spec_id, ": ", conditionMessage(e))
+      list(model = NULL, summary = NULL, diag = NULL, error = conditionMessage(e))
+    })
+
+    if (!is.null(fit_result$model)) {
+      model_store[[model_key]] <- fit_result$model
+    }
+
+    sm <- fit_result$summary
+    diag <- fit_result$diag %||% tibble::tibble(
+      k_index_min = NA_real_, k_pvalue_min = NA_real_, k_ok = NA,
+      concurvity_max_worst = NA_real_, concurvity_ok = NA,
+      resid_morans_i = NA_real_, resid_morans_p = NA_real_,
+      resid_spatial_ok = NA, diagnostics_ok = FALSE
+    )
+
+    tuning_rows[[i]] <- tibble::tibble(
+      response          = resp,
+      spec_index        = spec$spec_index,
+      spec_id           = spec$spec_id,
+      candidate_name    = spec$candidate_name,
+      k                 = spec$k,
+      spatial           = spec$spatial,
+      k_spatial         = spec$k_spatial,
+      smooth_terms_used = .term_string(spec$smooth_terms),
+      linear_terms_used = .term_string(spec$linear_terms),
+      AIC               = if (!is.null(sm)) sm$AIC           else NA_real_,
+      dev_explained     = if (!is.null(sm)) sm$dev_explained else NA_real_,
+      r_sq              = if (!is.null(sm)) sm$r_sq          else NA_real_,
+      n                 = if (!is.null(sm)) sm$n             else NA_integer_,
+      family            = if (!is.null(sm)) sm$family        else NA_character_,
+      link              = if (!is.null(sm)) sm$link          else NA_character_,
+      fit_error         = fit_result$error %||% NA_character_
+    ) |>
+      dplyr::bind_cols(diag)
+  }
+
   resp_tbl <- dplyr::bind_rows(tuning_rows)
-  
-  # Compute delta_AIC (0 = best-fitting candidate for this response)
-  min_aic  <- min(resp_tbl$AIC, na.rm = TRUE)
+  valid_tbl <- resp_tbl |> dplyr::filter(!is.na(AIC))
+  min_aic <- if (nrow(valid_tbl) > 0) min(valid_tbl$AIC, na.rm = TRUE) else NA_real_
+
   resp_tbl <- resp_tbl |>
-    dplyr::mutate(delta_AIC = AIC - min_aic) |>
-    dplyr::arrange(AIC)
-  
+    dplyr::mutate(
+      delta_AIC = AIC - min_aic,
+      diagnostics_rank_penalty = dplyr::if_else(diagnostics_ok %in% TRUE, 0L, 1L, missing = 1L)
+    ) |>
+    dplyr::arrange(diagnostics_rank_penalty, AIC)
+
   list(table = resp_tbl, models = model_store)
 }
 
-
-# =============================================================================
-# SECTION 4 – Run tuning grid
-# =============================================================================
-
-lichen_banner("GAM Tuning: Candidate Predictor Sets \u00d7 k")
-
-all_tuning_tables <- list()   # accumulate per-response tables for cross-summary
+lichen_banner("GAM Tuning: Full model specification grid")
 
 .run_group <- function(responses, family_fn, family_label) {
   group_tables <- list()
   for (resp in responses) {
     lichen_banner(paste("Tuning:", resp, "|", family_label))
-    
+
     result <- .tune_response(resp, family_fn)
     resp_tbl <- result$table
-    models   <- result$models
-    
-    # ---- Save per-response tuning table ----
-    readr::write_csv(
-      resp_tbl,
-      file.path(OUT_DIR_TUNING_REPORTS, paste0("tuning_", resp, ".csv"))
-    )
+    models <- result$models
+
+    readr::write_csv(resp_tbl, file.path(OUT_DIR_TUNING_REPORTS, paste0("tuning_", resp, ".csv")))
     lichen_message("Saved tuning table: tuning_", resp, ".csv")
-    
-    # ---- Save top-N model objects as RDS ----
+
     top_rows <- resp_tbl |>
       dplyr::filter(!is.na(AIC)) |>
+      dplyr::arrange(diagnostics_rank_penalty, AIC) |>
       dplyr::slice_head(n = TOP_N)
-    
+
     for (i in seq_len(nrow(top_rows))) {
-      mdl_key <- paste0(top_rows$candidate_name[i], "_k", top_rows$k[i])
+      mdl_key <- sprintf("spec_%05d", top_rows$spec_index[i])
       mdl_obj <- models[[mdl_key]]
       if (!is.null(mdl_obj)) {
         rds_file <- file.path(
           OUT_DIR_TUNING_MODELS,
-          sprintf("tuning_%s_rank%02d_%s_k%d.rds",
-                  resp, i, top_rows$candidate_name[i], top_rows$k[i])
+          sprintf("tuning_%s_rank%02d_spec%05d.rds", resp, i, top_rows$spec_index[i])
         )
         saveRDS(mdl_obj, rds_file)
-        lichen_message("Saved model RDS: ", basename(rds_file))
       }
     }
-    
+
     group_tables[[resp]] <- resp_tbl
   }
   group_tables
@@ -340,53 +416,87 @@ all_tuning_tables <- list()   # accumulate per-response tables for cross-summary
 
 all_tuning_tables <- c(
   .run_group(responses_bin, function() stats::binomial(link = "logit"), "binomial"),
-  .run_group(responses_cnt, function() mgcv::nb(link = "log"),          "nb")
+  .run_group(responses_cnt, function() mgcv::nb(link = "log"), "nb")
 )
 
 
 # =============================================================================
-# SECTION 5 – Cross-response covariate-signature summary
+# SECTION 5 – Cross-response comparison and recommendations
 # =============================================================================
 
-lichen_banner("Cross-Response Covariate Signature Summary")
+lichen_banner("Cross-Response Full-Spec Summary")
 
-all_tbl <- dplyr::bind_rows(all_tuning_tables)
+all_tbl <- dplyr::bind_rows(all_tuning_tables) |>
+  dplyr::group_by(response) |>
+  dplyr::mutate(
+    rank_by_aic = rank(AIC, ties.method = "first", na.last = "keep"),
+    rank_diag_then_aic = rank(diagnostics_rank_penalty * 1e9 + AIC, ties.method = "first", na.last = "keep"),
+    within_delta2 = !is.na(delta_AIC) & delta_AIC <= DELTA_AIC_TOL
+  ) |>
+  dplyr::ungroup()
 
-# Top-3 per response
-top3_tbl <- all_tbl |>
+readr::write_csv(all_tbl, file.path(OUT_DIR_TUNING_REPORTS, "all_model_specs_long.csv"))
+
+delta_wide <- all_tbl |>
+  dplyr::select(response, spec_id, delta_AIC) |>
+  tidyr::pivot_wider(names_from = spec_id, values_from = delta_AIC)
+readr::write_csv(delta_wide, file.path(OUT_DIR_TUNING_REPORTS, "response_by_spec_deltaAIC.csv"))
+
+best_spec_per_response <- all_tbl |>
   dplyr::filter(!is.na(AIC)) |>
   dplyr::group_by(response) |>
-  dplyr::slice_min(order_by = AIC, n = TOP_N, with_ties = FALSE) |>
+  dplyr::arrange(diagnostics_rank_penalty, AIC, .by_group = TRUE) |>
+  dplyr::slice_head(n = 1) |>
   dplyr::ungroup()
+readr::write_csv(best_spec_per_response, file.path(OUT_DIR_TUNING_REPORTS, "best_spec_per_response.csv"))
 
-# Attach canonical signature
-top3_tbl <- top3_tbl |>
-  dplyr::rowwise() |>
-  dplyr::mutate(
-    signature = .make_signature(
-      unlist(strsplit(smooth_terms_used %||% "", "; ", fixed = TRUE)),
-      unlist(strsplit(linear_terms_used %||% "", "; ", fixed = TRUE))
-    )
-  ) |>
-  dplyr::ungroup()
-
-# Summarise signature frequency and delta_AIC across responses
-sig_summary <- top3_tbl |>
-  dplyr::group_by(signature, smooth_terms_used, linear_terms_used) |>
+consensus_spec_ranking <- all_tbl |>
+  dplyr::filter(!is.na(AIC)) |>
+  dplyr::group_by(spec_id, candidate_name, smooth_terms_used, linear_terms_used, k, spatial, k_spatial) |>
   dplyr::summarise(
-    n_responses_in_top3 = dplyr::n(),
-    mean_delta_AIC      = mean(delta_AIC, na.rm = TRUE),
-    max_delta_AIC       = max(delta_AIC, na.rm = TRUE),
-    responses           = paste(sort(unique(response)), collapse = "; "),
-    .groups             = "drop"
+    n_responses_evaluated = dplyr::n_distinct(response),
+    n_best = sum(rank_by_aic == 1, na.rm = TRUE),
+    n_best_diag_first = sum(rank_diag_then_aic == 1, na.rm = TRUE),
+    n_within_delta2 = sum(within_delta2, na.rm = TRUE),
+    mean_delta_AIC = mean(delta_AIC, na.rm = TRUE),
+    median_delta_AIC = stats::median(delta_AIC, na.rm = TRUE),
+    max_delta_AIC = max(delta_AIC, na.rm = TRUE),
+    n_diag_ok = sum(diagnostics_ok, na.rm = TRUE),
+    responses_best = paste(sort(unique(response[rank_diag_then_aic == 1])), collapse = "; "),
+    responses_within_delta2 = paste(sort(unique(response[within_delta2])), collapse = "; "),
+    .groups = "drop"
   ) |>
-  dplyr::arrange(dplyr::desc(n_responses_in_top3), mean_delta_AIC)
+  dplyr::arrange(dplyr::desc(n_best_diag_first), dplyr::desc(n_within_delta2), mean_delta_AIC)
+readr::write_csv(consensus_spec_ranking, file.path(OUT_DIR_TUNING_REPORTS, "consensus_spec_ranking.csv"))
 
-readr::write_csv(
-  sig_summary,
-  file.path(OUT_DIR_TUNING_REPORTS, "cross_response_signature_summary.csv")
-)
-lichen_message("Saved cross-response signature summary.")
+recommended_spec_groups <- best_spec_per_response |>
+  dplyr::group_by(spec_id, candidate_name, smooth_terms_used, linear_terms_used, k, spatial, k_spatial) |>
+  dplyr::summarise(
+    n_responses = dplyr::n(),
+    responses = paste(sort(unique(response)), collapse = "; "),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(dplyr::desc(n_responses))
+readr::write_csv(recommended_spec_groups, file.path(OUT_DIR_TUNING_REPORTS, "recommended_spec_groups.csv"))
+
+selected_spec_manifest <- best_spec_per_response |>
+  dplyr::transmute(
+    response,
+    family,
+    link,
+    spec_id,
+    candidate_name,
+    smooth_terms_used,
+    linear_terms_used,
+    k,
+    spatial,
+    k_spatial,
+    diagnostics_ok,
+    delta_AIC,
+    selected_at = as.character(Sys.time())
+  ) |>
+  dplyr::arrange(response)
+readr::write_csv(selected_spec_manifest, file.path(OUT_DIR_TUNING_REPORTS, "selected_spec_manifest.csv"))
 
 
 # =============================================================================
@@ -395,39 +505,29 @@ lichen_message("Saved cross-response signature summary.")
 
 lichen_banner("Tuning Complete – Summary")
 
-cat(sprintf("Responses tuned  : %d binary + %d count\n",
+cat(sprintf("Responses tuned          : %d binary + %d count\n",
             length(responses_bin), length(responses_cnt)))
-cat(sprintf("Candidate sets   : %d\n", length(candidate_predictor_sets)))
-cat(sprintf("k values         : %s\n", paste(k_values, collapse = ", ")))
-cat(sprintf("Grid size/resp   : %d\n",
-            length(candidate_predictor_sets) * length(k_values)))
+cat(sprintf("Candidate sets           : %d\n", length(candidate_predictor_sets)))
+cat(sprintf("Total model specs        : %d\n", length(model_specs)))
+cat(sprintf("k values                 : %s\n", paste(k_values, collapse = ", ")))
+cat(sprintf("Spatial values           : %s\n", paste(spatial_values, collapse = ", ")))
+cat(sprintf("k_spatial values         : %s\n", paste(k_spatial_values, collapse = ", ")))
 
-cat("\nTop-3 models per response (sorted by AIC):\n")
-cat(strrep("-", 72), "\n")
-for (resp in names(all_tuning_tables)) {
-  tbl <- all_tuning_tables[[resp]] |>
-    dplyr::filter(!is.na(AIC)) |>
-    dplyr::slice_head(n = TOP_N)
-  cat(sprintf("\n  %s\n", resp))
-  for (i in seq_len(nrow(tbl))) {
-    cat(sprintf("    [%d] %-26s  k=%2d  AIC=%9.2f  \u0394AIC=%6.2f  dev=%.3f\n",
-                i,
-                tbl$candidate_name[i],
-                tbl$k[i],
-                tbl$AIC[i],
-                tbl$delta_AIC[i],
-                tbl$dev_explained[i]))
-  }
-}
-
-cat("\nCovariate signature frequency across top-3 sets:\n")
-cat(strrep("-", 72), "\n")
+cat("\nBest spec per response (diag-first ranking):\n")
 print(
-  sig_summary |>
-    dplyr::select(n_responses_in_top3, mean_delta_AIC, max_delta_AIC, signature),
-  n = 20
+  best_spec_per_response |>
+    dplyr::select(response, spec_id, AIC, delta_AIC, diagnostics_ok, k, spatial, k_spatial),
+  n = nrow(best_spec_per_response)
 )
 
-cat("\n\u2705 09.5_model_tuning_gam.R complete.\n")
-cat("   Tuning tables : ", OUT_DIR_TUNING_REPORTS, "\n", sep = "")
-cat("   Top models    : ", OUT_DIR_TUNING_MODELS,  "\n", sep = "")
+cat("\nTop consensus specs:\n")
+print(
+  consensus_spec_ranking |>
+    dplyr::select(spec_id, n_best_diag_first, n_within_delta2, mean_delta_AIC, responses_best) |>
+    dplyr::slice_head(n = 10),
+  n = 10
+)
+
+cat("\n✅ 09.5_model_tuning_gam.R complete.\n")
+cat("   Tuning reports : ", OUT_DIR_TUNING_REPORTS, "\n", sep = "")
+cat("   Tuning models  : ", OUT_DIR_TUNING_MODELS,  "\n", sep = "")

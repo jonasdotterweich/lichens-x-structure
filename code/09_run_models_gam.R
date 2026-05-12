@@ -16,6 +16,7 @@ source(here::here("code", "07_model_fitting_gam.R"))
 source(here::here("code", "08_model_diagnostics_gam.R"))
 
 cfg <- get_project_config()
+`%||%` <- function(a, b) if (!is.null(a)) a else b
 
 # ---- Paths ----
 PATH_LICHEN    <- here::here("outputs", "Sumava", "lichen_clean.csv")
@@ -26,6 +27,7 @@ OUT_DIR_MODELS_GAM  <- here::here("outputs", "Sumava", "models_gam")
 OUT_DIR_REPORTS_GAM  <- here::here("outputs", "Sumava", "reports_gam")
 FIG_DIR_GAM          <- here::here("figures", "gam")
 OUT_DIR_MODELING_DATA_GAM  <- here::here("outputs", "Sumava", "modeling_data_gam")
+TUNING_MANIFEST_PATH <- here::here("outputs", "Sumava", "reports_gam", "tuning_gam", "selected_spec_manifest.csv")
 dir.create(OUT_DIR_MODELS_GAM,  recursive = TRUE, showWarnings = FALSE)
 dir.create(OUT_DIR_REPORTS_GAM, recursive = TRUE, showWarnings = FALSE)
 dir.create(FIG_DIR_GAM,  recursive = TRUE, showWarnings = FALSE)
@@ -129,6 +131,50 @@ linear_terms <- c("ba_beech", "ba_spruce", "n_dead_50cm")
 
 predictor_cols <- c(smooth_terms, linear_terms)
 
+.split_terms <- function(x) {
+  x <- x %||% ""
+  if (length(x) == 0 || is.na(x) || !nzchar(x)) return(character(0))
+  trimws(strsplit(x, ";", fixed = TRUE)[[1]])
+}
+
+tuning_manifest <- NULL
+if (file.exists(TUNING_MANIFEST_PATH)) {
+  tuning_manifest <- readr::read_csv(TUNING_MANIFEST_PATH, show_col_types = FALSE) |>
+    dplyr::distinct(response, .keep_all = TRUE)
+  lichen_message("Using selected tuning manifest: ", TUNING_MANIFEST_PATH)
+} else {
+  lichen_message("No tuning manifest found; using default predictor settings.")
+}
+
+get_response_spec <- function(resp) {
+  if (!is.null(tuning_manifest) && resp %in% tuning_manifest$response) {
+    row <- tuning_manifest |> dplyr::filter(response == resp) |> dplyr::slice(1)
+    return(list(
+      linear_terms = .split_terms(row$linear_terms_used),
+      smooth_terms = .split_terms(row$smooth_terms_used),
+      spatial = isTRUE(row$spatial),
+      k = suppressWarnings(as.integer(row$k)),
+      k_spatial = suppressWarnings(as.integer(row$k_spatial)),
+      source = "manifest",
+      spec_id = row$spec_id %||% NA_character_
+    ))
+  }
+  list(
+    linear_terms = linear_terms,
+    smooth_terms = smooth_terms,
+    spatial = FALSE,
+    k = 5L,
+    k_spatial = 30L,
+    source = "default",
+    spec_id = NA_character_
+  )
+}
+
+.or_default_int <- function(x, default) {
+  xi <- suppressWarnings(as.integer(x))
+  ifelse(is.na(xi), as.integer(default), xi)
+}
+
 ## A reduced set of predictors for testing nonfitting models (e.g. mycoblastus_presence)-> therefore switsched off
 #linear_terms_core <- c("dbh_max", "n_dead_50cm", "logged", "logging_intensity")
 # smooth_terms_core <- smooth_terms  # keep elevation, volume_snags, canopy_cover
@@ -167,12 +213,14 @@ responses_spatial_control <- c("ochrolechia_presence", "core_ogf_presence", #myc
                               "calicioids_richness", "parmelia_agg_richness")
 
 models <- list()
+model_spec_used <- list()
 
 # Binary models (binomial)
 for (resp in responses_bin) {
   
-  lin <- linear_terms
-  sm  <- smooth_terms
+  spec <- get_response_spec(resp)
+  lin <- spec$linear_terms
+  sm  <- spec$smooth_terms
   
  #as of now mycoblastus_presence is counted out
  # if (resp == "mycoblastus_presence") {    # this is to use a reduced predictor on lichen groups were the fitting of the model failed
@@ -186,7 +234,17 @@ for (resp in responses_bin) {
     linear_terms = lin,
     smooth_terms = sm,
     family = stats::binomial(link = "logit"),
-    spatial = FALSE
+    spatial = isTRUE(spec$spatial),
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
+  )
+  model_spec_used[[resp]] <- tibble::tibble(
+    response = resp, source = spec$source, spec_id = spec$spec_id,
+    smooth_terms_used = paste(sm, collapse = "; "),
+    linear_terms_used = paste(lin, collapse = "; "),
+    spatial = isTRUE(spec$spatial),
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   
   run_gam_diagnostics(
@@ -199,7 +257,7 @@ for (resp in responses_bin) {
   )
   
   
-  if (resp %in% responses_spatial_control) {
+  if (isFALSE(spec$spatial) && resp %in% responses_spatial_control) {
     nm_sp <- paste0(resp, "_sxy")
     
     ksp <- 30                   
@@ -232,13 +290,24 @@ for (resp in responses_bin) {
 
 # Count models (negative binomial)
 for (resp in responses_cnt) {
+  spec <- get_response_spec(resp)
   models[[resp]] <- fit_gam_model(
     data = modeling_data,
     response = resp,
-    linear_terms = linear_terms,
-    smooth_terms = smooth_terms,
+    linear_terms = spec$linear_terms,
+    smooth_terms = spec$smooth_terms,
     family = mgcv::nb(link = "log"),
-    spatial = FALSE
+    spatial = isTRUE(spec$spatial),
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
+  )
+  model_spec_used[[resp]] <- tibble::tibble(
+    response = resp, source = spec$source, spec_id = spec$spec_id,
+    smooth_terms_used = paste(spec$smooth_terms, collapse = "; "),
+    linear_terms_used = paste(spec$linear_terms, collapse = "; "),
+    spatial = isTRUE(spec$spatial),
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   
   run_gam_diagnostics(
@@ -274,6 +343,8 @@ fit_tbl <- dplyr::bind_rows(lapply(names(models), function(nm) {
 readr::write_csv(param_tbl,  file.path(OUT_DIR_MODELS_GAM, "model_parametric_terms_all.csv"))
 readr::write_csv(smooth_tbl, file.path(OUT_DIR_MODELS_GAM, "model_smooth_terms_all.csv"))
 readr::write_csv(fit_tbl,    file.path(OUT_DIR_MODELS_GAM, "model_fit_overview_all.csv"))
+readr::write_csv(dplyr::bind_rows(model_spec_used),
+                 file.path(OUT_DIR_REPORTS_GAM, "model_spec_used_gam.csv"))
 
 # ---- Spatial autocorrelation (raw responses) ----
 raw_spatial <- calculate_morans_i(
