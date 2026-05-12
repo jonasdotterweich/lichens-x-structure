@@ -170,6 +170,11 @@ get_response_spec <- function(resp) {
   )
 }
 
+.or_default_int <- function(x, default) {
+  xi <- suppressWarnings(as.integer(x))
+  ifelse(is.na(xi), as.integer(default), xi)
+}
+
 ## A reduced set of predictors for testing nonfitting models (e.g. mycoblastus_presence)-> therefore switsched off
 #linear_terms_core <- c("dbh_max", "n_dead_50cm", "logged", "logging_intensity")
 # smooth_terms_core <- smooth_terms  # keep elevation, volume_snags, canopy_cover
@@ -230,16 +235,16 @@ for (resp in responses_bin) {
     smooth_terms = sm,
     family = stats::binomial(link = "logit"),
     spatial = isTRUE(spec$spatial),
-    k = ifelse(is.na(spec$k), 5L, spec$k),
-    k_spatial = ifelse(is.na(spec$k_spatial), 30L, spec$k_spatial)
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   model_spec_used[[resp]] <- tibble::tibble(
     response = resp, source = spec$source, spec_id = spec$spec_id,
     smooth_terms_used = paste(sm, collapse = "; "),
     linear_terms_used = paste(lin, collapse = "; "),
     spatial = isTRUE(spec$spatial),
-    k = ifelse(is.na(spec$k), 5L, spec$k),
-    k_spatial = ifelse(is.na(spec$k_spatial), 30L, spec$k_spatial)
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   
   run_gam_diagnostics(
@@ -293,16 +298,16 @@ for (resp in responses_cnt) {
     smooth_terms = spec$smooth_terms,
     family = mgcv::nb(link = "log"),
     spatial = isTRUE(spec$spatial),
-    k = ifelse(is.na(spec$k), 5L, spec$k),
-    k_spatial = ifelse(is.na(spec$k_spatial), 30L, spec$k_spatial)
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   model_spec_used[[resp]] <- tibble::tibble(
     response = resp, source = spec$source, spec_id = spec$spec_id,
     smooth_terms_used = paste(spec$smooth_terms, collapse = "; "),
     linear_terms_used = paste(spec$linear_terms, collapse = "; "),
     spatial = isTRUE(spec$spatial),
-    k = ifelse(is.na(spec$k), 5L, spec$k),
-    k_spatial = ifelse(is.na(spec$k_spatial), 30L, spec$k_spatial)
+    k = .or_default_int(spec$k, 5L),
+    k_spatial = .or_default_int(spec$k_spatial, 30L)
   )
   
   run_gam_diagnostics(
